@@ -17,6 +17,8 @@ from utils.general import (
     xyxy2xywh, clip_coords, plot_images, xywh2xyxy, box_iou, output_to_target, ap_per_class, set_logging)
 from utils.torch_utils import select_device, time_synchronized
 
+# import HHI Dataset format:
+from hhi_dataset.dataset import (Dataset as HHIDataset)
 
 def test(data,
          weights=None,
@@ -72,9 +74,24 @@ def test(data,
 
     # Configure
     model.eval()
-    with open(data) as f:
-        data = yaml.load(f, Loader=yaml.FullLoader)  # model dict
-    check_dataset(data)  # check
+
+    # check if using HHI Json Dataset Format:
+    USING_HHI_JSON = ('json' in os.path.splitext(data)[-1].lower())
+
+    if USING_HHI_JSON and os.path.isfile(data):
+        ds = HHIDataset(data)
+        rect_classes = ds.get_squished_classes(types=['rectangle'])
+        data = {
+            'test': data,
+            'val': data,
+            'names': list(rect_classes.keys()),
+            'nc': len(rect_classes)
+        }
+    else:
+        with open(data) as f:
+            data = yaml.load(f, Loader=yaml.FullLoader)  # model dict
+        check_dataset(data)  # check
+        
     nc = 1 if single_cls else int(data['nc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
     niou = iouv.numel()

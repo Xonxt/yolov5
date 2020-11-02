@@ -31,6 +31,9 @@ from utils.general import (
 from utils.google_utils import attempt_download
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts
 
+# import HHI Dataset format:
+from hhi_dataset.dataset import (Dataset as HHIDataset)
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,10 +57,25 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     # Configure
     cuda = device.type != 'cpu'
     init_seeds(2 + rank)
-    with open(opt.data) as f:
-        data_dict = yaml.load(f, Loader=yaml.FullLoader)  # data dict
-    with torch_distributed_zero_first(rank):
-        check_dataset(data_dict)  # check
+    
+    # check if using HHI Json Dataset Format:
+    USING_HHI_JSON = ('json' in os.path.splitext(opt.data)[-1].lower())
+    
+    if USING_HHI_JSON and os.path.isfile(opt.data):
+        ds = HHIDataset(opt.data)
+        rect_classes = ds.get_squished_classes(types=['rectangle'])
+        data_dict = {
+            'train': opt.data,
+            'val': opt.data,
+            'names': list(rect_classes.keys()),
+            'nc': len(rect_classes)
+        }
+    else:    
+        with open(opt.data) as f:
+            data_dict = yaml.load(f, Loader=yaml.FullLoader)  # data dict
+        with torch_distributed_zero_first(rank):
+            check_dataset(data_dict)  # check
+        
     train_path = data_dict['train']
     test_path = data_dict['val']
     nc, names = (1, ['item']) if opt.single_cls else (int(data_dict['nc']), data_dict['names'])  # number classes, names

@@ -16,6 +16,10 @@ from tqdm import tqdm
 
 from utils.general import xyxy2xywh, xywh2xyxy, torch_distributed_zero_first
 
+# import HHI Dataset format:
+from hhi_dataset.dataset import (Dataset as HHIDataset, unpack_annotation)
+from hhi_dataset import tools as HHITools
+
 help_url = 'https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
 img_formats = ['.bmp', '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.dng']
 vid_formats = ['.mov', '.avi', '.mp4', '.mpg', '.mpeg', '.m4v', '.wmv', '.mkv']
@@ -48,17 +52,24 @@ def exif_size(img):
 
 def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=False, cache=False, pad=0.0, rect=False,
                       rank=-1, world_size=1, workers=8):
+
+    # check if using HHI Json Dataset Format:
+    USING_HHI_JSON = ('json' in os.path.splitext(path)[-1].lower())
+
+    # Select Data loader type, based on path extension
+    DatasetLoader = LoadHHIDataset if USING_HHI_JSON else LoadImagesAndLabels
+
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache.
     with torch_distributed_zero_first(rank):
-        dataset = LoadImagesAndLabels(path, imgsz, batch_size,
-                                      augment=augment,  # augment images
-                                      hyp=hyp,  # augmentation hyperparameters
-                                      rect=rect,  # rectangular training
-                                      cache_images=cache,
-                                      single_cls=opt.single_cls,
-                                      stride=int(stride),
-                                      pad=pad,
-                                      rank=rank)
+        dataset = DatasetLoader(path, imgsz, batch_size,
+                                augment=augment,  # augment images
+                                hyp=hyp,  # augmentation hyperparameters
+                                rect=rect,  # rectangular training
+                                cache_images=cache,
+                                single_cls=opt.single_cls,
+                                stride=int(stride),
+                                pad=pad,
+                                rank=rank)
 
     batch_size = min(batch_size, len(dataset))
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
@@ -68,9 +79,8 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                                     num_workers=nw,
                                     sampler=sampler,
                                     pin_memory=True,
-                                    collate_fn=LoadImagesAndLabels.collate_fn)  # torch.utils.data.DataLoader()
+                                    collate_fn=DatasetLoader.collate_fn)  # torch.utils.data.DataLoader()
     return dataloader, dataset
-
 
 class InfiniteDataLoader(torch.utils.data.dataloader.DataLoader):
     """ Dataloader that reuses workers.
@@ -606,6 +616,199 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         return torch.stack(img, 0), torch.cat(label, 0), path, shapes
 
 
+class LoadHHIDataset(LoadImagesAndLabels):  # for training/testing
+    def __init__(self, path, img_size=640, batch_size=16, augment=False, hyp=None, rect=False, image_weights=False,
+                 cache_images=False, single_cls=False, stride=32, pad=0.0, rank=-1):
+        self.img_size = img_size
+        self.augment = augment
+        self.hyp = hyp
+        self.image_weights = image_weights
+        self.rect = False if image_weights else rect
+        self.mosaic = self.augment and not self.rect  # load 4 images at a time into a mosaic (only during training)
+        self.mosaic_border = [-img_size // 2, -img_size // 2]
+        self.stride = stride
+
+        try:
+            path = str(Path(path))  # os-agnostic
+            parent = str(Path(path).parent) + os.sep
+
+            # open the dataset:
+            self.dataset = HHIDataset(path)
+        except:
+            raise Exception('Error loading data from %s. See %s' % (path, help_url))
+
+        # get teh list of all images and annotations:
+        self.img_files = []
+        self.annotations = []
+        self.img_format = []
+        for idx in range(len(self.dataset)):
+            image_data = self.dataset.get_item(idx).get('data') or []
+            for src_idx in range(len(image_data)):
+                current_image_data = image_data[src_idx]
+                image_path = self.dataset.get_image_path(current_image_data.get('image'))
+                if image_path is None:
+                    continue
+                self.img_files.append(image_path)
+                self.img_format.append(current_image_data.get('image_format'))
+                annotations = unpack_annotation(current_image_data, self.dataset.get_classes(), unnormalize=False, rect_xywh2xyxy=False)
+                rectangles = [obj for obj in annotations if obj['class_type'] == 'rectangle']
+                self.annotations.append(rectangles)
+
+        # get size
+        n = len(self.img_files)
+        
+        # Check cache
+        cache_path = os.path.join(os.path.dirname(path), os.path.basename(os.path.dirname(path)) + '.cache')
+        if os.path.isfile(cache_path):
+            cache = torch.load(cache_path)  # load
+            if cache['hash'] != get_hash(self.img_files):  # dataset changed
+                cache = self.cache_labels(cache_path)  # re-cache
+        else:
+            cache = self.cache_labels(cache_path)  # cache
+
+        # Read cache
+        cache.pop('hash')  # remove hash
+        labels, shapes = zip(*cache.values())
+        self.labels = list(labels)
+        self.shapes = np.array(shapes, dtype=np.float64)
+        self.img_files = list(cache.keys())  # update
+
+        n = len(shapes)  # number of images
+        bi = np.floor(np.arange(n) / batch_size).astype(np.int)  # batch index
+        nb = bi[-1] + 1  # number of batches
+        self.batch = bi  # batch index of image
+        self.n = n
+
+        # Rectangular Training
+        if self.rect:
+            # Sort by aspect ratio
+            s = self.shapes  # wh
+            ar = s[:, 1] / s[:, 0]  # aspect ratio
+            irect = ar.argsort()
+            self.img_files = [self.img_files[i] for i in irect]
+            self.annotations = [self.annotations[i] for i in irect]
+            self.labels = [self.labels[i] for i in irect]
+            self.shapes = s[irect]  # wh
+            ar = ar[irect]
+
+            # Set training image shapes
+            shapes = [[1, 1]] * nb
+            for i in range(nb):
+                ari = ar[bi == i]
+                mini, maxi = ari.min(), ari.max()
+                if maxi < 1:
+                    shapes[i] = [maxi, 1]
+                elif mini > 1:
+                    shapes[i] = [1, 1 / mini]
+
+            self.batch_shapes = np.ceil(np.array(shapes) * img_size / stride + pad).astype(np.int) * stride
+
+        # Check labels
+        create_datasubset, extract_bounding_boxes, labels_loaded = False, False, False
+        nm, nf, ne, ns, nd = 0, 0, 0, 0, 0  # number missing, found, empty, datasubset, duplicate
+        pbar = enumerate(self.annotations)
+        if rank in [-1, 0]:
+            pbar = tqdm(pbar)
+        for i, rects in pbar:
+            file = self.img_files[i]
+            l = self.labels[i]  # label
+            if l is not None and l.shape[0]:
+                assert l.shape[1] == 5, '> 5 label columns: %s' % file
+                assert (l >= 0).all(), 'negative labels: %s' % file
+                assert (l[:, 1:] <= 1).all(), 'non-normalized or out of bounds coordinate labels: %s' % file
+                if np.unique(l, axis=0).shape[0] < l.shape[0]:  # duplicate rows
+                    nd += 1  # print('WARNING: duplicate rows in %s' % self.label_files[i])  # duplicate rows
+                if single_cls:
+                    l[:, 0] = 0  # force dataset into single-class mode
+                self.labels[i] = l
+                nf += 1  # file found
+
+                # Create subdataset (a smaller dataset)
+                if create_datasubset and ns < 1E4:
+                    if ns == 0:
+                        create_folder(path='./datasubset')
+                        os.makedirs('./datasubset/images')
+                    exclude_classes = 43
+                    if exclude_classes not in l[:, 0]:
+                        ns += 1
+                        # shutil.copy(src=self.img_files[i], dst='./datasubset/images/')  # copy image
+                        with open('./datasubset/images.txt', 'a') as f:
+                            f.write(self.img_files[i] + '\n')
+
+                # Extract object detection boxes for a second stage classifier
+                if extract_bounding_boxes:
+                    p = Path(self.img_files[i])
+                    img = cv2.imread(str(p))
+                    h, w = img.shape[:2]
+                    for j, x in enumerate(l):
+                        f = '%s%sclassifier%s%g_%g_%s' % (p.parent.parent, os.sep, os.sep, x[0], j, p.name)
+                        if not os.path.exists(Path(f).parent):
+                            os.makedirs(Path(f).parent)  # make new output folder
+
+                        b = x[1:] * [w, h, w, h]  # box
+                        b[2:] = b[2:].max()  # rectangle to square
+                        b[2:] = b[2:] * 1.3 + 30  # pad
+                        b = xywh2xyxy(b.reshape(-1, 4)).ravel().astype(np.int)
+
+                        b[[0, 2]] = np.clip(b[[0, 2]], 0, w)  # clip boxes outside of image
+                        b[[1, 3]] = np.clip(b[[1, 3]], 0, h)
+                        assert cv2.imwrite(f, img[b[1]:b[3], b[0]:b[2]]), 'Failure extracting classifier boxes'
+            else:
+                ne += 1  # print('empty labels for image %s' % self.img_files[i])  # file empty
+                # os.system("rm '%s' '%s'" % (self.img_files[i], self.label_files[i]))  # remove
+
+            if rank in [-1, 0]:
+                pbar.desc = 'Scanning labels %s (%g found, %g missing, %g empty, %g duplicate, for %g images)' % (
+                    cache_path, nf, nm, ne, nd, n)
+        if nf == 0:
+            s = 'WARNING: No labels found in %s. See %s' % (os.path.dirname(file) + os.sep, help_url)
+            print(s)
+            assert not augment, '%s. Can not train without labels.' % s
+
+        # Cache images into memory for faster training (WARNING: large datasets may exceed system RAM)
+        self.imgs = [None] * n
+        if cache_images:
+            gb = 0  # Gigabytes of cached images
+            pbar = tqdm(range(len(self.img_files)), desc='Caching images')
+            self.img_hw0, self.img_hw = [None] * n, [None] * n
+            for i in pbar:  # max 10k images
+                self.imgs[i], self.img_hw0[i], self.img_hw[i] = load_image(self, i)  # img, hw_original, hw_resized
+                gb += self.imgs[i].nbytes
+                pbar.desc = 'Caching images (%.1fGB)' % (gb / 1E9)
+
+    def cache_labels(self, path='labels.cache'):
+        # Cache dataset labels, check images and read shapes
+
+         # 'squished' class-ids, that start from 0 and go [0,1,2,3,...] instead of possibly [1, 5, 9, ...]
+        class_ids = self.dataset.get_squished_classes(types=['rectangle'])
+        x = {}  # dict
+        pbar = tqdm(zip(self.img_files, self.annotations), desc='Parsing annotations', total=len(self.img_files))
+        for (img, rects) in pbar:
+            try:
+                l = []
+                im = Image.open(img)
+                im.verify()  # PIL verify
+                shape = exif_size(im)  # image size
+                assert (shape[0] > 9) & (shape[1] > 9), 'image size <10 pixels'
+
+                l = []
+                for obj in rects:
+                    rect = obj.get('object').squeeze()
+                    class_name = obj.get('class_name')
+                    class_id = int((class_ids.get(class_name) or {}).get('new_id'))
+                    l.append(np.hstack([class_id, rect]))
+                l = np.asarray(l)
+
+                if len(l) == 0:
+                    l = np.zeros((0, 5), dtype=np.float32)
+                x[img] = [l, shape]
+            except Exception as e:
+                print('WARNING: Ignoring corrupted image and/or label %s: %s' % (img, e))
+
+        x['hash'] = get_hash(self.img_files)
+        torch.save(x, path)  # save for next time
+        return x
+
 # Ancillary functions --------------------------------------------------------------------------------------------------
 def load_image(self, index):
     # loads 1 image from dataset, returns img, original hw, resized hw
@@ -615,6 +818,15 @@ def load_image(self, index):
         img = cv2.imread(path)  # BGR
         assert img is not None, 'Image Not Found ' + path
         h0, w0 = img.shape[:2]  # orig hw
+
+        # check image format:
+        try:
+            img_format = self.img_format[index]
+            if img_format == 'RGB':
+                img[..., :3] = cv2.cvtColor(img[..., :3], cv2.COLOR_RGB2BGR)
+        except:
+            pass
+
         r = self.img_size / max(h0, w0)  # resize image to img_size
         if r != 1:  # always resize down, only resize up if training with augmentation
             interp = cv2.INTER_AREA if r < 1 and not self.augment else cv2.INTER_LINEAR
