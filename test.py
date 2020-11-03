@@ -79,11 +79,12 @@ def test(data,
     USING_HHI_JSON = ('json' in os.path.splitext(data)[-1].lower())
 
     if USING_HHI_JSON and os.path.isfile(data):
-        ds = HHIDataset(data)
-        rect_classes = ds.get_squished_classes(types=['rectangle'])
+        hhi_dataset = HHIDataset(data)
+        _, valid = hhi_dataset.split_training_data(types=['rectangle'], val_fraction=0.2, shuffle=True)
+        rect_classes = hhi_dataset.get_squished_classes(types=['rectangle'])
         data = {
-            'test': data,
-            'val': data,
+            'val': {'path': data, 'dataset': valid},
+            'test': {'path': data, 'dataset': valid},
             'names': list(rect_classes.keys()),
             'nc': len(rect_classes)
         }
@@ -91,7 +92,7 @@ def test(data,
         with open(data) as f:
             data = yaml.load(f, Loader=yaml.FullLoader)  # model dict
         check_dataset(data)  # check
-        
+
     nc = 1 if single_cls else int(data['nc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
     niou = iouv.numel()

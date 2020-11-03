@@ -54,7 +54,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                       rank=-1, world_size=1, workers=8):
 
     # check if using HHI Json Dataset Format:
-    USING_HHI_JSON = ('json' in os.path.splitext(path)[-1].lower())
+    USING_HHI_JSON = isinstance(path, dict)
 
     # Select Data loader type, based on path extension
     DatasetLoader = LoadHHIDataset if USING_HHI_JSON else LoadImagesAndLabels
@@ -629,30 +629,18 @@ class LoadHHIDataset(LoadImagesAndLabels):  # for training/testing
         self.stride = stride
 
         try:
-            path = str(Path(path))  # os-agnostic
-            parent = str(Path(path).parent) + os.sep
+            dataset = path['dataset']
+            
+            print("---\nDataset:\n", dataset)
 
-            # open the dataset:
-            self.dataset = HHIDataset(path)
+            self.img_files = [d['path'] for d in dataset]
+            self.annotations = [d['labels'] for d in dataset]
+            self.img_format = [d['img_format'] for d in dataset]
+            
+            path = str(Path(path['path']))
+            parent = str(Path(path).parent) + os.sep
         except:
             raise Exception('Error loading data from %s. See %s' % (path, help_url))
-
-        # get teh list of all images and annotations:
-        self.img_files = []
-        self.annotations = []
-        self.img_format = []
-        for idx in range(len(self.dataset)):
-            image_data = self.dataset.get_item(idx).get('data') or []
-            for src_idx in range(len(image_data)):
-                current_image_data = image_data[src_idx]
-                image_path = self.dataset.get_image_path(current_image_data.get('image'))
-                if image_path is None:
-                    continue
-                self.img_files.append(image_path)
-                self.img_format.append(current_image_data.get('image_format'))
-                annotations = unpack_annotation(current_image_data, self.dataset.get_classes(), unnormalize=False, rect_xywh2xyxy=False)
-                rectangles = [obj for obj in annotations if obj['class_type'] == 'rectangle']
-                self.annotations.append(rectangles)
 
         # get size
         n = len(self.img_files)
@@ -779,8 +767,6 @@ class LoadHHIDataset(LoadImagesAndLabels):  # for training/testing
     def cache_labels(self, path='labels.cache'):
         # Cache dataset labels, check images and read shapes
 
-         # 'squished' class-ids, that start from 0 and go [0,1,2,3,...] instead of possibly [1, 5, 9, ...]
-        class_ids = self.dataset.get_squished_classes(types=['rectangle'])
         x = {}  # dict
         pbar = tqdm(zip(self.img_files, self.annotations), desc='Parsing annotations', total=len(self.img_files))
         for (img, rects) in pbar:
@@ -795,7 +781,7 @@ class LoadHHIDataset(LoadImagesAndLabels):  # for training/testing
                 for obj in rects:
                     rect = obj.get('object').squeeze()
                     class_name = obj.get('class_name')
-                    class_id = int((class_ids.get(class_name) or {}).get('new_id'))
+                    class_id = obj.get('new_id')
                     l.append(np.hstack([class_id, rect]))
                 l = np.asarray(l)
 
@@ -834,7 +820,6 @@ def load_image(self, index):
         return img, (h0, w0), img.shape[:2]  # img, hw_original, hw_resized
     else:
         return self.imgs[index], self.img_hw0[index], self.img_hw[index]  # img, hw_original, hw_resized
-
 
 def augment_hsv(img, hgain=0.5, sgain=0.5, vgain=0.5):
     r = np.random.uniform(-1, 1, 3) * [hgain, sgain, vgain] + 1  # random gains

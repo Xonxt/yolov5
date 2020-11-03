@@ -12,6 +12,8 @@ import time
 import shutil
 import copy
 # -------------------------------------
+from operator import itemgetter
+# -------------------------------------
 from hhi_dataset.tools import *
 # -------------------------------------
 
@@ -43,7 +45,7 @@ class Dataset:
 
          # set starting point
         self.__current_file = self.__metadata_path
-        
+
         # set starting index
         self.__index = self.__metadata[self.__metadata_path].get('last_idx') or 0
 
@@ -76,13 +78,13 @@ class Dataset:
         """
         Load the metadata and recursively load all the embedded metadatas
         """
-        
+
         #metadata_path = self.__fix_path_separators(metadata_path)
         #parent = self.__fix_path_separators(parent)
         #absparent = self.__fix_path_separators(absparent)
 
         metadata_path_abs = os.path.abspath(os.path.join(os.path.dirname(absparent), metadata_path))
-        
+
         metadata_path_abs = self.__fix_path_separators(metadata_path_abs)
 
         if not os.path.exists(metadata_path_abs):
@@ -92,7 +94,7 @@ class Dataset:
         # add link to parent file and the absolute path for image loading and re-saving
         if metadata_path not in self.__file_hierarchy:
             self.__file_hierarchy[metadata_path] = {'parent': parent, 'abspath': metadata_path_abs}
-            
+
         try:
             content = json.load( open(metadata_path_abs, "r") )
         except:
@@ -197,11 +199,11 @@ class Dataset:
         #1. Create backup:
         save_path = self.__file_hierarchy[metadata_path]['abspath']
         backup_name = os.path.splitext(save_path)[0] + ".bak"
-        
+
         # fix path separators
         save_path = self.__fix_path_separators(save_path)
         backup_name = self.__fix_path_separators(backup_name)
-        
+
         shutil.copyfile(save_path, backup_name)
 
         #2. Try to save:
@@ -248,23 +250,23 @@ class Dataset:
     # get the absolute path prefix for the current image
     def get_path_prefix(self):
         return os.path.dirname( self.__file_hierarchy[self.__current_file]['abspath'] )
-    
+
     # -------------------------------------
     def get_image_path(self, image_path):
         full_path = os.path.join(self.get_path_prefix(), self.__fix_path_separators(image_path))
-            
+
         return full_path
-    
+
     def __fix_path_separators(self, path):
         new_path = path
-        
+
          # if windows, check that there are no '/' slashes:
         if os.name == 'nt':
             new_path = new_path.replace('/', '\\')
         # if linux, replace every '\' with a '/' slach
         else:
             new_path = new_path.replace('\\', '/')
-            
+
         return new_path
 
     # -------------------------------------
@@ -276,26 +278,24 @@ class Dataset:
     # current set of classes
     def get_classes(self):
         return self.__classes[self.__current_file]
-    
+
     # -------------------------------------
     # returns a set of 'squished' class-IDs of the selected type
     def get_squished_classes(self, types=None):
         class_ids = {}
-        
+
+        if types is not None and not isinstance(types, list):
+            types = [types]
+
         for class_set in self.__classes.values():
-            if isinstance(types, list):
-                current_classes = [c for c in class_set if c.get('type') in types]
-            elif isinstance(types, str):
-                current_classes = [c for c in class_set if c.get('type') == types]
-            else:
-                current_classes = [c for c in class_set]
+            current_classes = [c for c in class_set] if types is None else [c for c in class_set if c.get('type') in types]
 
             for c in current_classes:
                 class_id = c.get('class_id')
                 class_name = c.get('class_name')
                 if class_name not in class_ids:
-                    class_ids[class_name] = {'new_id': len(class_ids), 'old_id': class_id} 
-                    
+                    class_ids[class_name] = {'new_id': len(class_ids), 'old_id': class_id}
+
         return class_ids
 
     # -------------------------------------
@@ -318,6 +318,66 @@ class Dataset:
 
         if c is not None and len(c):
             return c[0]
+        else:
+            return None
+
+    # -------------------------------------
+    # split the data into training and testing/validation parts,
+    # and return them as "{image: annotation}" dictionary
+    def split_training_data(self, types=None, val_fraction=0.1, shuffle=True, max_val_size=None):
+
+        class_ids = self.get_squished_classes(types)
+
+        if types is not None and not isinstance(types, list):
+            types = [types]
+
+        img_files = []
+
+        for idx in range(self.__size):
+            image_data = self.get_item(idx).get('data') or []
+            for src_idx in range(len(image_data)):
+                current_image_data = image_data[src_idx]
+                image_path = self.get_image_path(current_image_data.get('image'))
+                if image_path is None:
+                    continue
+                annotations = unpack_annotation(current_image_data, self.get_classes(), unnormalize=False, rect_xywh2xyxy=False)
+                labels = [obj for obj in annotations] if types is None else [obj for obj in annotations if obj['class_type'] in types]
+                
+                for obj in labels:
+                    obj['new_id'] = class_ids[obj['class_name']]['new_id']
+
+                img_file = {'path': image_path, 'labels': labels, 'img_format': current_image_data.get('image_format')}
+                img_files.append(img_file)
+
+        total_size = len(img_files)
+        val_size = math.ceil(total_size * val_fraction)
+
+        if max_val_size is not None and isinstance(max_val_size, int):
+            val_size = np.clip(val_size, 1, max_val_size)
+            
+        
+        indexes = np.arange(total_size)
+
+        if shuffle:
+            np.random.shuffle(indexes)
+
+        val_part = sorted(indexes[-val_size:])
+        training_part = sorted(indexes[:-val_size])
+
+        self.training_dataset = list(itemgetter(*training_part)(img_files)) if len(training_part) > 1 else [img_files[training_part[0]]]
+        self.validation_dataset = list(itemgetter(*val_part)(img_files)) if len(val_part) > 1 else [img_files[val_part[0]]]
+
+        return self.training_dataset, self.validation_dataset
+
+    def get_training_dataset(self):
+        if hasattr(self, 'training_dataset'):
+            return self.training_dataset
+        else:
+            return None
+
+    def get_validation_dataset(self):
+        if hasattr(self, 'validation_dataset'):
+            return self.validation_dataset
         else:
             return None
 
@@ -394,11 +454,11 @@ class Dataset:
             if z is not None:
                 z = np.repeat(z, points.shape[0]) if len(z) == 1 else z[:points.shape[0]]
                 points = np.hstack([points, z.reshape((-1,1))])
-                
+
          # try to infer whether the points are normalized or not:
         if is_normalized is None:
             # check if all X and Y coordinates are 0.0 <= .. <= 1.0:
-            is_normalized = (np.all(points[:,:2] <= 1.0) and np.all(points[:,:2] >= 0.0))            
+            is_normalized = (np.all(points[:,:2] <= 1.0) and np.all(points[:,:2] >= 0.0))
 
         # generate a uuid:
         uid = generate_annotation_uuid(class_type)
@@ -406,7 +466,7 @@ class Dataset:
         for target in [source_name] if not calibration or not use_mapping else calibration.keys():
             # copy points before mapping
             mapped_points = points.copy()
-            
+
             # get the target image_data:
             target_image_data = [d for d in image_data if d.get('source') == target][0]
 
@@ -605,7 +665,7 @@ def map_coordinates(source_points, calibration, source, target, z=1000, src_size
         # divide again by the (z), crop only the (x, y):
         new_pt /= new_pt[2]
         new_pt = new_pt[:2].squeeze()
-        
+
         # print(f"Mapped point from {pt1} ({source}) to {new_pt} ({target}) with depth: {z[i]}")
 
         # normalize the coordinate to [0..1, 0..1]
