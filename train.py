@@ -63,7 +63,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     
     if USING_HHI_JSON and os.path.isfile(opt.data):
         hhi_dataset = HHIDataset(opt.data)
-        train, valid = hhi_dataset.split_training_data(types=['rectangle'], val_fraction=0.1, shuffle=True)
+        train, valid = hhi_dataset.split_training_data(types=['rectangle'], val_fraction=opt.val_size, shuffle=True)
         rect_classes = hhi_dataset.get_squished_classes(types=['rectangle'])
         data_dict = {
             'train': {'path': opt.data, 'dataset': train},
@@ -411,6 +411,7 @@ if __name__ == '__main__':
     parser.add_argument('--weights', type=str, default='yolov5s.pt', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
     parser.add_argument('--data', type=str, default='data/coco128.yaml', help='data.yaml path')
+    parser.add_argument('--val-size', type=float, default=0.1, help='fraction of the Json Dataset, used for validation')  
     parser.add_argument('--hyp', type=str, default='data/hyp.scratch.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=300)
     parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs')

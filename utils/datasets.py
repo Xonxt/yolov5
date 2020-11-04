@@ -630,9 +630,7 @@ class LoadHHIDataset(LoadImagesAndLabels):  # for training/testing
 
         try:
             dataset = path['dataset']
-            
-            print("---\nDataset:\n", dataset)
-
+                     
             self.img_files = [d['path'] for d in dataset]
             self.annotations = [d['labels'] for d in dataset]
             self.img_format = [d['img_format'] for d in dataset]
