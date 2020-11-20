@@ -1,5 +1,19 @@
-## --------------------------------------------------------------------------------------------------------------------------
-## This will take the previously generated json-metadata file and allow you to manually annotate it
+##
+# ingroup: DatasetAnnotation
+# file:    dataset.py
+# brief:   This is a wrapper class that reads and interacts with the HHI Json Dataset Format
+# author:  Nikita Kovalenko (mykyta.kovalenko@hhi.fraunhofer.de)
+# date:    01.10.2020
+#
+# Copyright:
+# 2020 Fraunhofer Institute for Telecommunications, Heinrich-Hertz-Institut (HHI)
+# The copyright of this software source code is the property of HHI.
+# This software may be used and/or copied only with the written permission
+# of HHI and in accordance with the terms and conditions stipulated
+# in the agreement/contract under which the software has been supplied.
+# The software distributed under this license is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either expressed or implied.
+##
 
 ## --------------------------------------------------------------------------------------------------------------------------
 import os, sys
@@ -14,7 +28,7 @@ import copy
 # -------------------------------------
 from operator import itemgetter
 # -------------------------------------
-from hhi_dataset.tools import *
+from utils.tools import *
 # -------------------------------------
 
 #----------------------------------------------------------------------------------------
@@ -78,13 +92,8 @@ class Dataset:
         """
         Load the metadata and recursively load all the embedded metadatas
         """
-
-        #metadata_path = self.__fix_path_separators(metadata_path)
-        #parent = self.__fix_path_separators(parent)
-        #absparent = self.__fix_path_separators(absparent)
-
+        
         metadata_path_abs = os.path.abspath(os.path.join(os.path.dirname(absparent), metadata_path))
-
         metadata_path_abs = self.__fix_path_separators(metadata_path_abs)
 
         if not os.path.exists(metadata_path_abs):
@@ -150,8 +159,13 @@ class Dataset:
             self.__load_metadata(file, metadata_path, metadata_path_abs)
 
     # -------------------------------------
+    # get current top-level metadata path:
+    def get_metadata_path(self):
+        return self.__metadata_path
+    
+    # -------------------------------------
     # traverse the full dataset file-struture in post-order (bottom to top)
-    def __traverse(self, node=None, action=None):
+    def __traverse(self, node=None, action=None, params=None):
         """
         Traverse the file hierarchy (depth-first)
         """
@@ -166,20 +180,27 @@ class Dataset:
             return
 
         for child in self.__file_hierarchy[node]['children']:
-            self.__traverse(child, action=action)
+            self.__traverse(child, action=action, params=params)
 
         # DO SOMETHING:
         if callable(action):
-            action(node)
+            if params is None:
+                action(node)
+            else:
+                action(node, params)
+                
 
     # -------------------------------------
     # save file
-    def save_dataset(self):
-        self.__traverse(action=self.__save_metadata)
+    def save_dataset(self, verbose=True):
+        self.__traverse(action=self.__save_metadata, params=verbose)
 
     # -------------------------------------
     # save one file
-    def __save_metadata(self, metadata_path):
+    def __save_metadata(self, metadata_path, verbose=True):
+        
+        if verbose is None:
+            verbose = True
 
         # update the metadata
         metadata = copy.deepcopy(self.__metadata[metadata_path])
@@ -215,11 +236,13 @@ class Dataset:
             if os.path.exists(backup_name):
                 os.remove(backup_name)
 
-            log(f"Saved the metadata file '{save_path}'")
+            if verbose:
+                log(f"Saved the metadata file '{save_path}'")
         except Exception:
             #3. restore the backup if error:
-            log(f"Failed to save the metadata file '{save_path}'", msg_type=MessageType.ERROR)
-            traceback.print_exc()
+            if verbose:
+                log(f"Failed to save the metadata file '{save_path}'", msg_type=MessageType.ERROR)
+                traceback.print_exc()
 
             # restore backup:
             if os.path.exists(save_path):
@@ -254,7 +277,6 @@ class Dataset:
     # -------------------------------------
     def get_image_path(self, image_path):
         full_path = os.path.join(self.get_path_prefix(), self.__fix_path_separators(image_path))
-
         return full_path
 
     def __fix_path_separators(self, path):
@@ -325,7 +347,6 @@ class Dataset:
     # split the data into training and testing/validation parts,
     # and return them as "{image: annotation}" dictionary
     def split_training_data(self, types=None, val_fraction=0.1, shuffle=True, max_val_size=None):
-
         class_ids = self.get_squished_classes(types)
 
         if types is not None and not isinstance(types, list):
@@ -353,19 +374,19 @@ class Dataset:
         val_size = math.ceil(total_size * val_fraction)
 
         if max_val_size is not None and isinstance(max_val_size, int):
-            val_size = np.clip(val_size, 1, max_val_size)
-            
-        
+            val_size = np.clip(val_size, 0, max_val_size)
+
         indexes = np.arange(total_size)
 
         if shuffle:
             np.random.shuffle(indexes)
 
-        val_part = sorted(indexes[-val_size:])
-        training_part = sorted(indexes[:-val_size])
+        val_part = sorted(indexes[-val_size:]) if val_fraction else []
+        training_part = sorted(indexes[:-val_size]) if val_fraction else sorted(indexes)
+        
 
-        self.training_dataset = list(itemgetter(*training_part)(img_files)) if len(training_part) > 1 else [img_files[training_part[0]]]
-        self.validation_dataset = list(itemgetter(*val_part)(img_files)) if len(val_part) > 1 else [img_files[val_part[0]]]
+        self.training_dataset = list(itemgetter(*training_part)(img_files)) if len(training_part) > 1 else [img_files[training_part[0]]] if len(training_part) else []
+        self.validation_dataset = list(itemgetter(*val_part)(img_files)) if len(val_part) > 1 else [img_files[val_part[0]]] if len(val_part) else []
 
         return self.training_dataset, self.validation_dataset
 
@@ -383,7 +404,7 @@ class Dataset:
 
     # -------------------------------------
     # add annotation class_id to class number
-    def add_annotation(self, idx, target_class, point_data, is_normalized=None, source=None, use_mapping=False, is_xyxy=False):
+    def add_annotation(self, idx, target_class, point_data, is_normalized=None, source=None, use_mapping=False, is_xyxy=False, force_uid=None):
         """
         idx [Integer]           The global index of the image, to which to add an annotation
 
@@ -398,6 +419,8 @@ class Dataset:
         is_normalized [Boolean] The provided coordinates ARE normalized to (0..1), otherwise the function does it for you
 
         is_xyxy [Boolean]       If it's a rectangle, the coordinates are given as TL (x1,y1) and BR (x2,y2) points, otherwise - (cX,cY,W,H)
+        
+        force_uid [String]      Overwrite the UUID
         """
 
         # get the image data (here, the correct CLASSES and CALIBRATIONS will also be chosen)
@@ -461,7 +484,7 @@ class Dataset:
             is_normalized = (np.all(points[:,:2] <= 1.0) and np.all(points[:,:2] >= 0.0))
 
         # generate a uuid:
-        uid = generate_annotation_uuid(class_type)
+        uid = generate_annotation_uuid(class_type) if force_uid is None else force_uid
 
         for target in [source_name] if not calibration or not use_mapping else calibration.keys():
             # copy points before mapping
@@ -500,7 +523,8 @@ class Dataset:
             annotation = {
                 'uid': uid,
                 'object': mapped_points,
-                'type': class_type
+                'type': class_type,
+                'created': get_annotation_timestamp()
             }
 
             # add reference to the source, from which this object was mapped

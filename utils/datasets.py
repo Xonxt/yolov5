@@ -806,7 +806,7 @@ def load_image(self, index):
         # check image format:
         try:
             img_format = self.img_format[index]
-            if img_format == 'RGB':
+            if 'RGB' in str(img_format).upper():
                 img[..., :3] = cv2.cvtColor(img[..., :3], cv2.COLOR_RGB2BGR)
         except:
             pass

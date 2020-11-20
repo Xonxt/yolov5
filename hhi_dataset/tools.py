@@ -27,8 +27,15 @@ import datetime, time
 import shutil
 import random
 import string
+import getpass
+import re, textwrap
 #----------------------
 from enum import Enum
+#----------------------
+if os.name != 'nt':
+    import pwd
+else:
+    import ctypes
 #----------------------
 
 #----------------------
@@ -75,6 +82,7 @@ COLOR_KHAKI = (140,230,240)
 COLOR_FOREST = (0,128,0)
 COLOR_WHITE = (255,255,255)
 COLOR_GREY = (128,128,128)
+COLOR_DARK_GREY = (200,200,200)
 COLOR_BLACK = (0,0,0)
 
 # a few primary colors
@@ -108,6 +116,47 @@ def generate_annotation_uuid(class_type):
     return uuid
 
 ## --------------------------------------------------------------------------------------------------------------------------
+def get_user_name():
+
+    if os.name != 'nt':
+        name = " ".join(pwd.getpwuid(os.getuid())[4].split(",")).strip()
+
+    else:
+        GetUserNameEx = ctypes.windll.secur32.GetUserNameExW
+        NameDisplay = 3
+
+        size = ctypes.pointer(ctypes.c_ulong(0))
+        GetUserNameEx(NameDisplay, None, size)
+
+        nameBuffer = ctypes.create_unicode_buffer(size.contents.value)
+        GetUserNameEx(NameDisplay, nameBuffer, size)
+
+        name = nameBuffer.value
+
+    if not len(name):
+        name = str(getpass.getuser())
+    elif "," in name:
+        name_parts = name.split(",")
+        name = " ".join([p.strip() for p in name_parts[::-1]])
+
+    return name
+
+# -------------------------------------------------------------
+def get_annotation_timestamp():
+    try:
+        author_name = str(get_user_name())
+    except:
+        author_name = str(getpass.getuser())
+    timestamp = datetime.datetime.now().strftime('%d.%m.%Y - %H:%M:%S')
+    return {'who': author_name,
+            'when': timestamp}
+    
+
+## --------------------------------------------------------------------------------------------------------------------------
+def split_long_line(text, max_len=40):
+    return textwrap.wrap(text, max_len)
+
+## --------------------------------------------------------------------------------------------------------------------------
 # find something in a list based on condition
 def list_find(lst, condition, default=-1):
     idx = [i for i, elem in enumerate(lst) if condition(elem)]
@@ -118,8 +167,12 @@ def list_find(lst, condition, default=-1):
 
 # ----------------------
 # calculate Euclidian distance between two points in 2D...
-def dist_2d(pt1, pt2=(0,0)):
-    return ((pt1[0] - pt2[0]) ** 2 + (pt1[1] - pt2[1]) ** 2) ** 0.5
+def dist_2d(pt1, pt2=(0, 0)):
+    try:
+        dist = ((pt1[0] - pt2[0]) ** 2 + (pt1[1] - pt2[1]) ** 2) ** 0.5
+        return dist
+    except:
+        return 0
 
 # ...and in 3D
 def dist_3d(pt1, pt2=(0,0,0)):
@@ -203,7 +256,7 @@ def log(msg, prefix="", msg_type=MessageType.LOG, msg_time=1.5, write_to_file=Fa
     timestamp = datetime.datetime.now()
     stamp_time = timestamp.strftime('%H:%M:%S')
     stamp_ms = timestamp.strftime('.%f') if milliseconds else ''
-    
+
     message_string = f"{prefix}{msg_type.name} :: {stamp_time}{stamp_ms} :: {msg}"
     print(message_string)
 
@@ -325,7 +378,7 @@ class Sorting(Enum):
     DSCN = 1
     ASCN = 2
 
-def draw_text(canvas, string, org=(0,0), align=Align.LEFT, valign=Valign.TOP, inner_pad=0, outer_pad=[0,0],
+def draw_text(canvas, string, org=(0,0), align=Align.LEFT, valign=Valign.TOP, inner_pad=5, outer_pad=[5, 5],
               font_face=cv2.FONT_HERSHEY_PLAIN, font_size=2, font_color=(255, 255, 255), font_width=1, line_type=cv2.LINE_4,
               outline=False, outline_color=(0, 0, 0), outline_width=2, darken_background=-1, background_color=None, sort=Sorting.NONE):
     """
@@ -346,7 +399,6 @@ def draw_text(canvas, string, org=(0,0), align=Align.LEFT, valign=Valign.TOP, in
 
     # iterate through strings to calculate the box dimensions
     for i, s in enumerate(string):
-
         dims, _ = cv2.getTextSize(s, font_face, font_size, font_width)
         dims_array.append(dims)
 
@@ -364,6 +416,19 @@ def draw_text(canvas, string, org=(0,0), align=Align.LEFT, valign=Valign.TOP, in
     # if no image was supplied, just return the text block size
     if not is_valid_image(canvas):
         return (max_width, max_height)
+
+    return_canvas = (org is None)
+    if return_canvas:
+        canvas = np.zeros((max_height, max_width, 3), dtype=np.uint8)
+        org = [0, 0]
+        if align == Align.RIGHT:
+            org[0] = max_width - 1
+        elif align == Align.CENTER:
+            org[0] = max_width // 2
+        if valign == Valign.MIDDLE:
+            org[1] = max_height // 2
+        elif valign == Valign.BOTTOM:
+            org[1] = max_height - 1
 
     # calculate the top-left point for the text block
     tl = [org[0], org[1]]
@@ -384,7 +449,6 @@ def draw_text(canvas, string, org=(0,0), align=Align.LEFT, valign=Valign.TOP, in
     elif valign == Valign.BOTTOM:
         tl[1] = org[1] - max_height
         br[1] = org[1]
-
 
     if darken_background >= 0:
         darken_background = np.clip(darken_background, 0, 1)
@@ -419,7 +483,7 @@ def draw_text(canvas, string, org=(0,0), align=Align.LEFT, valign=Valign.TOP, in
         if align == Align.CENTER:
             pt[0] = org[0] - dim[0] // 2
         elif align == Align.RIGHT:
-            pt[0] = br[0] - dim[0]
+            pt[0] = br[0] - dim[0] - outer_pad[0]
 
         # draw the outline, when necessary
         if outline:
@@ -430,8 +494,10 @@ def draw_text(canvas, string, org=(0,0), align=Align.LEFT, valign=Valign.TOP, in
                     font_width, line_type)
 
     # return the total width and height of the text block
-    return (max_width, max_height)
-
+    if return_canvas:
+        return canvas
+    else:
+        return (max_width, max_height)
 ## --------------------------------------------------------------------------------------------------------------------------
 FLASHING_TEXT = {"text":"", "duration":0, "tick":0, "color":COLOR_WHITE}
 BLACK_MASK = None
