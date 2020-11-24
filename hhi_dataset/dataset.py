@@ -28,8 +28,7 @@ import copy
 # -------------------------------------
 from operator import itemgetter
 # -------------------------------------
-from utils.tools import *
-# -------------------------------------
+from hhi_dataset.tools import *
 
 #----------------------------------------------------------------------------------------
 class NumpyEncoder(json.JSONEncoder):
