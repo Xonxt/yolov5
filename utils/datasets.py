@@ -19,6 +19,7 @@ from utils.general import xyxy2xywh, xywh2xyxy, torch_distributed_zero_first
 # import HHI Dataset format:
 from hhi_dataset.dataset import (Dataset as HHIDataset, unpack_annotation)
 from hhi_dataset import tools as HHITools
+from hhi_dataset import augmentations as hhi_aug
 
 help_url = 'https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
 img_formats = ['.bmp', '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.dng']
@@ -791,7 +792,105 @@ class LoadHHIDataset(LoadImagesAndLabels):  # for training/testing
 
         x['hash'] = get_hash(self.img_files)
         torch.save(x, path)  # save for next time
-        return x
+        return x    
+    
+    def __getitem__(self, index):
+        # Additional image augmentations
+                
+        if self.image_weights:
+            index = self.indices[index]
+
+        hyp = self.hyp
+        mosaic = self.mosaic and random.random() < hyp['mosaic']
+        if mosaic:
+            # Load mosaic
+            img, labels = load_mosaic(self, index)
+            shapes = None
+
+            # MixUp https://arxiv.org/pdf/1710.09412.pdf
+            if random.random() < hyp['mixup']:
+                img2, labels2 = load_mosaic(self, random.randint(0, len(self.labels) - 1))
+                r = np.random.beta(8.0, 8.0)  # mixup ratio, alpha=beta=8.0
+                img = (img * r + img2 * (1 - r)).astype(np.uint8)
+                labels = np.concatenate((labels, labels2), 0)
+
+        else:
+            # Load image
+            img, (h0, w0), (h, w) = load_image(self, index)
+
+            # Letterbox
+            shape = self.batch_shapes[self.batch[index]] if self.rect else self.img_size  # final letterboxed shape
+            img, ratio, pad = letterbox(img, shape, auto=False, scaleup=self.augment)
+            shapes = (h0, w0), ((h / h0, w / w0), pad)  # for COCO mAP rescaling
+
+            # Load labels
+            labels = []
+            x = self.labels[index]
+            if x.size > 0:
+                # Normalized xywh to pixel xyxy format
+                labels = x.copy()
+                labels[:, 1] = ratio[0] * w * (x[:, 1] - x[:, 3] / 2) + pad[0]  # pad width
+                labels[:, 2] = ratio[1] * h * (x[:, 2] - x[:, 4] / 2) + pad[1]  # pad height
+                labels[:, 3] = ratio[0] * w * (x[:, 1] + x[:, 3] / 2) + pad[0]
+                labels[:, 4] = ratio[1] * h * (x[:, 2] + x[:, 4] / 2) + pad[1]
+
+        if self.augment:
+            
+            # augment brightness, contrast and gamma
+            hhi_aug.augment_contrast(img, max_chance=0.5, max_range=0.2)
+            hhi_aug.augment_brightness(img, max_chance=0.5, max_range=50)
+            hhi_aug.augment_gamma(img, max_chance=0.5, max_range=(0.75, 2.5))
+            
+            # Augment imagespace
+            if not mosaic:
+                
+                # add compression artifacts, noise and resizing artifacts:
+                hhi_aug.augment_compress_artifacts(img, max_chance=0.5, max_range=0.4)
+                hhi_aug.augment_add_noise(img, max_chance=0.5, max_intensity=0.1)
+                hhi_aug.augment_add_resize_artifacts(img, max_chance=0.5, max_factor=4)
+                
+                img, labels = random_perspective(img, labels,
+                                                 degrees=hyp['degrees'],
+                                                 translate=hyp['translate'],
+                                                 scale=hyp['scale'],
+                                                 shear=hyp['shear'],
+                                                 perspective=hyp['perspective'])
+
+            # Augment colorspace
+            augment_hsv(img, hgain=hyp['hsv_h'], sgain=hyp['hsv_s'], vgain=hyp['hsv_v'])
+
+            # Apply cutouts
+            # if random.random() < 0.9:
+            #     labels = cutout(img, labels)
+
+        nL = len(labels)  # number of labels
+        if nL:
+            labels[:, 1:5] = xyxy2xywh(labels[:, 1:5])  # convert xyxy to xywh
+            labels[:, [2, 4]] /= img.shape[0]  # normalized height 0-1
+            labels[:, [1, 3]] /= img.shape[1]  # normalized width 0-1
+
+        if self.augment:
+            # flip up-down
+            if random.random() < hyp['flipud']:
+                img = np.flipud(img)
+                if nL:
+                    labels[:, 2] = 1 - labels[:, 2]
+
+            # flip left-right
+            if random.random() < hyp['fliplr']:
+                img = np.fliplr(img)
+                if nL:
+                    labels[:, 1] = 1 - labels[:, 1]
+
+        labels_out = torch.zeros((nL, 6))
+        if nL:
+            labels_out[:, 1:] = torch.from_numpy(labels)
+
+        # Convert
+        img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
+        img = np.ascontiguousarray(img)
+
+        return torch.from_numpy(img), labels_out, self.img_files[index], shapes
 
 # Ancillary functions --------------------------------------------------------------------------------------------------
 def load_image(self, index):
