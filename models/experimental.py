@@ -1,5 +1,7 @@
 # This file contains experimental modules
 
+import os
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -129,14 +131,43 @@ class Ensemble(nn.ModuleList):
         return y, None  # inference, train output
 
 
-def attempt_load(weights, map_location=None):
+def attempt_load(weights, map_location=None, resave=False):
     # Loads an ensemble of models weights=[a,b,c] or a single model weights=[a] or weights=a
     model = Ensemble()
+    
+    if resave:
+        resaved_models = Ensemble()
+        resaved_names = []
+
+    i = 0
+
     for w in weights if isinstance(weights, list) else [weights]:
         attempt_download(w)
+        
+        print("keys:", list(torch.load(w).keys()))
+
+        if resave:
+            # state_dict = torch.load(w)['model']
+            model_name = os.path.splitext(w)
+            new_save_path = model_name[0] + "_" + str(i) + model_name[-1]
+            
+            resaved_names.append(new_save_path)
+            resaved_models.append(torch.load(w)['model'].eval())
+
+            # print(f"Saving the model as '{new_save_path}'")
+            # torch.save({'model': state_dict}, new_save_path)
+            # i += 1
+
         model.append(torch.load(w, map_location=map_location)['model'].float().fuse().eval())  # load FP32 model
 
     # Compatibility updates
+    
+    if resave:
+        for i in range(len(resaved_models)):
+            print(f"Saving the model as '{resaved_names[i]}'")
+            torch.save({'model': resaved_models[i].state_dict()}, resaved_names[i])
+            
+
     for m in model.modules():
         if type(m) in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6]:
             m.inplace = True  # pytorch 1.7.0 compatibility
@@ -150,3 +181,6 @@ def attempt_load(weights, map_location=None):
         for k in ['names', 'stride']:
             setattr(model, k, getattr(model[-1], k))
         return model  # return ensemble
+    
+    
+    

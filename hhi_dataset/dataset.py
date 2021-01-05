@@ -302,14 +302,15 @@ class Dataset:
 
     # -------------------------------------
     # returns a set of 'squished' class-IDs of the selected type
-    def get_squished_classes(self, types=None):
+    def get_squished_classes(self, classes=None):
         class_ids = {}
 
-        if types is not None and not isinstance(types, list):
-            types = [types]
+        if classes is not None and not isinstance(classes, list):
+            classes = [classes]
 
         for class_set in self.__classes.values():
-            current_classes = [c for c in class_set] if types is None else [c for c in class_set if c.get('type') in types]
+            current_classes = [c for c in class_set] if classes is None else \
+                [c for c in class_set if c.get('type') in classes or c.get('class_name') in classes]
 
             for c in current_classes:
                 class_id = c.get('class_id')
@@ -345,11 +346,11 @@ class Dataset:
     # -------------------------------------
     # split the data into training and testing/validation parts,
     # and return them as "{image: annotation}" dictionary
-    def split_training_data(self, types=None, val_fraction=0.1, shuffle=True, max_val_size=None):
-        class_ids = self.get_squished_classes(types)
+    def split_training_data(self, classes=None, val_fraction=0.1, shuffle=True, max_val_size=None):
+        class_ids = self.get_squished_classes(classes)
 
-        if types is not None and not isinstance(types, list):
-            types = [types]
+        if classes is not None and not isinstance(classes, list):
+            classes = [classes]
 
         img_files = []
 
@@ -361,10 +362,11 @@ class Dataset:
                 if image_path is None:
                     continue
                 annotations = unpack_annotation(current_image_data, self.get_classes(), unnormalize=False, rect_xywh2xyxy=False)
-                labels = [obj for obj in annotations] if types is None else [obj for obj in annotations if obj['class_type'] in types]
+                labels = [obj for obj in annotations] if classes is None else \
+                    [obj for obj in annotations if obj['class_type'] in classes or obj['class_name'] in classes]
                 
                 for obj in labels:
-                    obj['new_id'] = class_ids[obj['class_name']]['new_id']
+                    obj['new_id'] = class_ids[ obj['class_name'] ]['new_id']
 
                 img_file = {'path': image_path, 'labels': labels, 'img_format': current_image_data.get('image_format')}
                 img_files.append(img_file)
@@ -381,13 +383,12 @@ class Dataset:
             np.random.shuffle(indexes)
 
         val_part = sorted(indexes[-val_size:]) if val_fraction else []
-        training_part = sorted(indexes[:-val_size]) if val_fraction else sorted(indexes)
-        
+        training_part = sorted(indexes[:-val_size]) if val_fraction else sorted(indexes)        
 
         self.training_dataset = list(itemgetter(*training_part)(img_files)) if len(training_part) > 1 else [img_files[training_part[0]]] if len(training_part) else []
         self.validation_dataset = list(itemgetter(*val_part)(img_files)) if len(val_part) > 1 else [img_files[val_part[0]]] if len(val_part) else []
 
-        return self.training_dataset, self.validation_dataset
+        return self.training_dataset, self.validation_dataset, class_ids
 
     def get_training_dataset(self):
         if hasattr(self, 'training_dataset'):

@@ -135,7 +135,6 @@ def __rotateImage(image, angle, borderValue):
                             borderMode=cv2.BORDER_CONSTANT, borderValue=borderValue)
     return result
 
-
 # ADD ARTIFACTS LIKE IF THE IMAGE WAS RESIZED
 def augment_add_resize_artifacts(image, max_chance=0.5, max_factor = 8):
     f = np.random.uniform(1, max_factor + 0.01) if np.random.rand() < max_chance else 1
