@@ -66,7 +66,9 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         
         # here you can set "classes=['rectangle']" to take all rectangles, or list actual class names to filter by class names
         # e.g.: classes=['hand', 'finger', 'face']
-        train, valid, classes = hhi_dataset.split_training_data(classes=['rectangle'], val_fraction=opt.val_size, shuffle=True)
+        # train, valid, classes = hhi_dataset.split_training_data(classes=['rectangle'], val_fraction=opt.val_size, shuffle=True)
+        train, valid, classes = hhi_dataset.split_training_data(classes=['gec_object', 'bad_gec_object', 'screw_hole_box', 'screw_bolt'], 
+                                                                val_fraction=opt.val_size, shuffle=True)
 
         data_dict = {
             'train': {'path': opt.data, 'dataset': train},
