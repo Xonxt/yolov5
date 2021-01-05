@@ -80,13 +80,14 @@ def test(data,
 
     if USING_HHI_JSON and os.path.isfile(data):
         hhi_dataset = HHIDataset(data)
-        _, valid = hhi_dataset.split_training_data(types=['rectangle'], val_fraction=0.2, shuffle=True)
-        rect_classes = hhi_dataset.get_squished_classes(types=['rectangle'])
+        #_, valid = hhi_dataset.split_training_data(types=['rectangle'], val_fraction=0.05, shuffle=True)
+        _, valid, classes = hhi_dataset.split_training_data(classes=['gec_object', 'bad_gec_object', 'screw_hole_box', 'screw_bolt'], 
+                                                                val_fraction=opt.val_size, shuffle=True)
         data = {
             'val': {'path': data, 'dataset': valid},
             'test': {'path': data, 'dataset': valid},
-            'names': list(rect_classes.keys()),
-            'nc': len(rect_classes)
+            'names': list(classes.keys()),
+            'nc': len(classes)
         }
     else:
         with open(data) as f:
