@@ -63,12 +63,10 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
 
     if USING_HHI_JSON and os.path.isfile(opt.data):
         hhi_dataset = HHIDataset(opt.data)
-        
+
         # here you can set "classes=['rectangle']" to take all rectangles, or list actual class names to filter by class names
         # e.g.: classes=['hand', 'finger', 'face']
-        # train, valid, classes = hhi_dataset.split_training_data(classes=['rectangle'], val_fraction=opt.val_size, shuffle=True)
-        train, valid, classes = hhi_dataset.split_training_data(classes=['gec_object', 'bad_gec_object', 'screw_hole_box', 'screw_bolt'], 
-                                                                val_fraction=opt.val_size, shuffle=True)
+        train, valid, classes = hhi_dataset.split_training_data(classes=opt.classes, val_fraction=opt.val_size, shuffle=True)
 
         data_dict = {
             'train': {'path': opt.data, 'dataset': train},
@@ -341,7 +339,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                 ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride'])
             final_epoch = epoch + 1 == epochs
             if not opt.notest or final_epoch:  # Calculate mAP
-                results, maps, times = test.test(opt.data,
+                results, maps, times = test.test(opt.data if not USING_HHI_JSON else hhi_dataset,
                                                  batch_size=total_batch_size,
                                                  imgsz=imgsz_test,
                                                  model=ema.ema,
@@ -416,8 +414,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', type=str, default='yolov5s.pt', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
-    parser.add_argument('--data', type=str, default='data/coco128.yaml', help='data.yaml path')
-    parser.add_argument('--val-size', type=float, default=0.1, help='fraction of the Json Dataset, used for validation')
     parser.add_argument('--hyp', type=str, default='data/hyp.scratch.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=300)
     parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs')
@@ -441,6 +437,22 @@ if __name__ == '__main__':
     parser.add_argument('--logdir', type=str, default='runs/', help='logging directory')
     parser.add_argument('--log-imgs', type=int, default=10, help='number of images for W&B logging, max 100')
     parser.add_argument('--workers', type=int, default=8, help='maximum number of dataloader workers')
+
+
+    # changed/added parameters:
+    
+    parser.add_argument('--data', type=str, default='data/coco128.yaml', help='data.yaml path OR path to the HHI Json Dataset')
+    # here you can set the path to the "yaml" file that describes the dataset, just as before
+    # but if you give a path to a JSON file, then it will be read and parsed as a HHI Json Format Dataset metadata file
+
+    parser.add_argument('--val-size', type=float, default=0.05, help='fraction of the Json Dataset, used for validation')
+    # if using the HHI Json Format Dataset format, this sets the ratio of the dataset, that will be used for validation (random samples)
+
+    parser.add_argument('--classes', type=str, default='rectangle', help='limit training to only these class or class list', nargs="+")
+    # if using the HHI Json Format Dataset, normally all annotations of the 'rectangle' type will be used for training,
+    # but you can limit the training to only specific classes, and give them as a space-separated list
+    # (use ""-quotation marks, if a class name has whitespaces), e.g.:
+    # python train.py --data ... --classes gec_object bad_gec_object "screw hole" hand "open hand" --val_size 0.05 ...
 
     opt = parser.parse_args()
 

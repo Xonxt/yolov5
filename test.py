@@ -76,16 +76,22 @@ def test(data,
     model.eval()
 
     # check if using HHI Json Dataset Format:
-    USING_HHI_JSON = ('json' in os.path.splitext(data)[-1].lower())
-
-    if USING_HHI_JSON and os.path.isfile(data):
-        hhi_dataset = HHIDataset(data)
+    # USING_HHI_JSON = ('json' in os.path.splitext(data)[-1].lower())
+    USING_HHI_JSON = isinstance(data, HHIDataset)
+    
+    # if USING_HHI_JSON and os.path.isfile(data):
+    if USING_HHI_JSON:
+        hhi_dataset = data
         #_, valid = hhi_dataset.split_training_data(types=['rectangle'], val_fraction=0.05, shuffle=True)
-        _, valid, classes = hhi_dataset.split_training_data(classes=['gec_object', 'bad_gec_object', 'screw_hole_box', 'screw_bolt'], 
-                                                                val_fraction=opt.val_size, shuffle=True)
+        #_, valid, classes = hhi_dataset.split_training_data(classes=['gec_object', 'bad_gec_object', 'screw_hole_box', 'screw_bolt'], 
+        #                                                        val_fraction=opt.val_size, shuffle=True)
+        
+        valid, classes = hhi_dataset.get_validation_dataset()
+        data_path = hhi_dataset.get_path_prefix()
+        
         data = {
-            'val': {'path': data, 'dataset': valid},
-            'test': {'path': data, 'dataset': valid},
+            'val': {'path': data_path, 'dataset': valid},
+            'test': {'path': data_path, 'dataset': valid},
             'names': list(classes.keys()),
             'nc': len(classes)
         }

@@ -17,6 +17,9 @@ from utils.general import (
 from utils.torch_utils import select_device, load_classifier, time_synchronized
 
 
+from models.yolo import Model
+
+
 def detect(save_img=False):
     out, source, weights, view_img, save_txt, imgsz = \
         opt.save_dir, opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size
@@ -31,12 +34,21 @@ def detect(save_img=False):
     half = device.type != 'cpu'  # half precision only supported on CUDA
 
     # Load model
-    model = attempt_load(weights, map_location=device, resave=opt.resave)  # load FP32 model
-    imgsz = check_img_size(imgsz, s=model.stride.max())  # check img_size
+    # model = attempt_load(weights, map_location=device, resave=opt.resave)  # load FP32 model
+    
+    model = Model("models/yolov5l.yaml", ch=3, nc=4)
+    weights = "D:\\Projects\\YOLO\\yolov5\\runs\\exp8\\weights\\model_pytorch_object_detector_yolo5_many.pt"
+    model.load_state_dict(torch.load(weights, map_location=device)['model'])
+    model.to(device).float().fuse().eval()
+    
+    # imgsz = check_img_size(imgsz, s=model.stride.max())  # check img_size
+    imgsz = 640
+    
+    print("Using HALF precision: ", half)
     
     if half:
         model.half()  # to FP16
-
+        
     # Second-stage classifier
     classify = False
     if classify:
@@ -55,7 +67,8 @@ def detect(save_img=False):
         dataset = LoadImages(source, img_size=imgsz)
 
     # Get names and colors
-    names = model.module.names if hasattr(model, 'module') else model.names
+    # names = model.module.names if hasattr(model, 'module') else model.names
+    names = ["gec_object", "bad_gec_object", "screw_hole_box", "screw_bolt"]
     colors = [[random.randint(0, 255) for _ in range(3)] for _ in range(len(names))]
 
     # Run inference
@@ -72,10 +85,16 @@ def detect(save_img=False):
         # Inference
         t1 = time_synchronized()
         pred = model(img, augment=opt.augment)[0]
+        
+        print("---\nPred before NMS:\n", pred)
 
         # Apply NMS
         pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
         t2 = time_synchronized()
+        
+        print("---\nPred after NMS:\n", pred)
+
+        print("OPT:", opt)
 
         # Apply Classifier
         if classify:

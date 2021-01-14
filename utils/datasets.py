@@ -631,11 +631,11 @@ class LoadHHIDataset(LoadImagesAndLabels):  # for training/testing
 
         try:
             dataset = path['dataset']
-                     
+
             self.img_files = [d['path'] for d in dataset]
             self.annotations = [d['labels'] for d in dataset]
             self.img_format = [d['img_format'] for d in dataset]
-            
+
             path = str(Path(path['path']))
             parent = str(Path(path).parent) + os.sep
         except:
@@ -643,7 +643,7 @@ class LoadHHIDataset(LoadImagesAndLabels):  # for training/testing
 
         # get size
         n = len(self.img_files)
-        
+
         # Check cache
         cache_path = os.path.join(os.path.dirname(path), os.path.basename(os.path.dirname(path)) + '.cache')
         if os.path.isfile(cache_path):
@@ -792,11 +792,11 @@ class LoadHHIDataset(LoadImagesAndLabels):  # for training/testing
 
         x['hash'] = get_hash(self.img_files)
         torch.save(x, path)  # save for next time
-        return x    
-    
+        return x
+
     def __getitem__(self, index):
         # Additional image augmentations
-                
+
         if self.image_weights:
             index = self.indices[index]
 
@@ -835,20 +835,20 @@ class LoadHHIDataset(LoadImagesAndLabels):  # for training/testing
                 labels[:, 4] = ratio[1] * h * (x[:, 2] + x[:, 4] / 2) + pad[1]
 
         if self.augment:
-            
+
             # augment brightness, contrast and gamma
             hhi_aug.augment_contrast(img, max_chance=0.5, max_range=0.2)
             hhi_aug.augment_brightness(img, max_chance=0.5, max_range=50)
             hhi_aug.augment_gamma(img, max_chance=0.5, max_range=(0.75, 2.5))
-            
+
             # Augment imagespace
             if not mosaic:
-                
+
                 # add compression artifacts, noise and resizing artifacts:
                 hhi_aug.augment_compress_artifacts(img, max_chance=0.5, max_range=0.4)
                 hhi_aug.augment_add_noise(img, max_chance=0.5, max_intensity=0.1)
                 hhi_aug.augment_add_resize_artifacts(img, max_chance=0.5, max_factor=4)
-                
+
                 img, labels = random_perspective(img, labels,
                                                  degrees=hyp['degrees'],
                                                  translate=hyp['translate'],

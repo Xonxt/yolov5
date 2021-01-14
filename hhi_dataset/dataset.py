@@ -91,7 +91,7 @@ class Dataset:
         """
         Load the metadata and recursively load all the embedded metadatas
         """
-        
+
         metadata_path_abs = os.path.abspath(os.path.join(os.path.dirname(absparent), metadata_path))
         metadata_path_abs = self.__fix_path_separators(metadata_path_abs)
 
@@ -161,7 +161,7 @@ class Dataset:
     # get current top-level metadata path:
     def get_metadata_path(self):
         return self.__metadata_path
-    
+
     # -------------------------------------
     # traverse the full dataset file-struture in post-order (bottom to top)
     def __traverse(self, node=None, action=None, params=None):
@@ -187,7 +187,7 @@ class Dataset:
                 action(node)
             else:
                 action(node, params)
-                
+
 
     # -------------------------------------
     # save file
@@ -197,7 +197,7 @@ class Dataset:
     # -------------------------------------
     # save one file
     def __save_metadata(self, metadata_path, verbose=True):
-        
+
         if verbose is None:
             verbose = True
 
@@ -306,12 +306,14 @@ class Dataset:
         class_ids = {}
 
         if classes is not None and not isinstance(classes, list):
-            classes = [classes]
+            classes = [classes.lower()]
+        elif isinstance(classes, list):
+            classes = [str(c).lower() for c in classes]
 
         for class_set in self.__classes.values():
             current_classes = [c for c in class_set] if classes is None else \
-                [c for c in class_set if c.get('type') in classes or c.get('class_name') in classes]
-
+                [c for c in class_set if c.get('type').lower() in classes or c.get('class_name').lower() in classes]
+                
             for c in current_classes:
                 class_id = c.get('class_id')
                 class_name = c.get('class_name')
@@ -348,10 +350,13 @@ class Dataset:
     # and return them as "{image: annotation}" dictionary
     def split_training_data(self, classes=None, val_fraction=0.1, shuffle=True, max_val_size=None):
         class_ids = self.get_squished_classes(classes)
-
+       
         if classes is not None and not isinstance(classes, list):
-            classes = [classes]
-
+            classes = [classes.lower()]
+            
+        elif isinstance(classes, list):
+            classes = [str(c).lower() for c in classes]
+        
         img_files = []
 
         for idx in range(self.__size):
@@ -363,8 +368,8 @@ class Dataset:
                     continue
                 annotations = unpack_annotation(current_image_data, self.get_classes(), unnormalize=False, rect_xywh2xyxy=False)
                 labels = [obj for obj in annotations] if classes is None else \
-                    [obj for obj in annotations if obj['class_type'] in classes or obj['class_name'] in classes]
-                
+                    [obj for obj in annotations if obj['class_type'].lower() in classes or obj['class_name'].lower() in classes]
+
                 for obj in labels:
                     obj['new_id'] = class_ids[ obj['class_name'] ]['new_id']
 
@@ -383,22 +388,23 @@ class Dataset:
             np.random.shuffle(indexes)
 
         val_part = sorted(indexes[-val_size:]) if val_fraction else []
-        training_part = sorted(indexes[:-val_size]) if val_fraction else sorted(indexes)        
+        training_part = sorted(indexes[:-val_size]) if val_fraction else sorted(indexes)
 
         self.training_dataset = list(itemgetter(*training_part)(img_files)) if len(training_part) > 1 else [img_files[training_part[0]]] if len(training_part) else []
         self.validation_dataset = list(itemgetter(*val_part)(img_files)) if len(val_part) > 1 else [img_files[val_part[0]]] if len(val_part) else []
+        self.squished_classes = class_ids
 
-        return self.training_dataset, self.validation_dataset, class_ids
+        return self.training_dataset, self.validation_dataset, self.squished_classes
 
     def get_training_dataset(self):
         if hasattr(self, 'training_dataset'):
-            return self.training_dataset
+            return self.training_dataset, self.squished_classes
         else:
             return None
 
     def get_validation_dataset(self):
         if hasattr(self, 'validation_dataset'):
-            return self.validation_dataset
+            return self.validation_dataset, self.squished_classes
         else:
             return None
 
@@ -419,7 +425,7 @@ class Dataset:
         is_normalized [Boolean] The provided coordinates ARE normalized to (0..1), otherwise the function does it for you
 
         is_xyxy [Boolean]       If it's a rectangle, the coordinates are given as TL (x1,y1) and BR (x2,y2) points, otherwise - (cX,cY,W,H)
-        
+
         force_uid [String]      Overwrite the UUID
         """
 
