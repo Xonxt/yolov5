@@ -24,7 +24,6 @@ from scipy.cluster.vq import kmeans
 from scipy.signal import butter, filtfilt
 from tqdm import tqdm
 
-from utils.google_utils import gsutil_getsize
 from utils.torch_utils import is_parallel, init_torch_seeds
 
 # Set printoptions
@@ -35,6 +34,10 @@ matplotlib.rc('font', **{'size': 11})
 # Prevent OpenCV from multithreading (to use PyTorch DataLoader)
 cv2.setNumThreads(0)
 
+def gsutil_getsize(url=''):
+    # gs://bucket/file size https://cloud.google.com/storage/docs/gsutil/commands/du
+    s = subprocess.check_output('gsutil du %s' % url, shell=True).decode('utf-8')
+    return eval(s.split(' ')[0]) if len(s) else 0  # bytes
 
 @contextmanager
 def torch_distributed_zero_first(local_rank: int):

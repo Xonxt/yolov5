@@ -1,13 +1,12 @@
 # This file contains experimental modules
 import os
 
+import json
 import numpy as np
 import torch
 import torch.nn as nn
 
 from models.common import Conv, DWConv
-from utils.google_utils import attempt_download
-
 
 class CrossConv(nn.Module):
     # Cross Convolution Downsample
@@ -130,7 +129,7 @@ class Ensemble(nn.ModuleList):
         return y, None  # inference, train output
 
 
-def attempt_load(weights, map_location=None, resave=False):
+def attempt_load(weights, map_location=None, resave=False, cfg=None):
     # Loads an ensemble of models weights=[a,b,c] or a single model weights=[a] or weights=a
     model = Ensemble()
 
@@ -139,7 +138,6 @@ def attempt_load(weights, map_location=None, resave=False):
         resaved_names = []
 
     for i,w in enumerate(weights if isinstance(weights, list) else [weights]):
-        attempt_download(w)
 
         if resave:
             model_name = os.path.splitext(w)
@@ -152,16 +150,34 @@ def attempt_load(weights, map_location=None, resave=False):
             model.append(torch.load(w, map_location=map_location)['model'].float().fuse().eval())  # load FP32 model
 
     if resave:
+        
+        model_json = os.path.join(os.path.dirname(resaved_names[0]), "model_data.json") 
+        model_data = {'models': []}                
+        
         for i in range(len(resaved_models)):
             print(f"Saving the model as '{resaved_names[i]}'")
+                        
+            model_name = os.path.basename(resaved_names[i])
+            model_data_i = {'name': model_name, 
+                            'version': 'yolo5', 
+                            'description': "YOLO v5 based model",
+                            'mirrors': []}
+            
             try:
+                if cfg is not None:
+                    model_data_i['cfg'] = os.path.basename(str(cfg))            
+                    
                 names = resaved_models[i].module.names if hasattr(resaved_models[i], 'module') else resaved_models[i].names
+                model_data_i['class_names'] = names
                 print("Classes list: ", names)
+                
             except:
                 pass
 
             torch.save({'model': resaved_models[i].state_dict()}, resaved_names[i])
+            model_data['models'].append(model_data_i)
             
+        json.dump(model_data, open(model_json, "w"), indent=2)            
         return None
 
     # Compatibility updates

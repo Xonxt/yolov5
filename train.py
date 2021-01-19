@@ -28,9 +28,7 @@ from utils.general import (
     torch_distributed_zero_first, labels_to_class_weights, plot_labels, check_anchors, labels_to_image_weights,
     compute_loss, plot_images, fitness, strip_optimizer, plot_results, get_latest_run, check_dataset, check_file,
     check_git_status, check_img_size, increment_dir, print_mutation, plot_evolution, set_logging, init_seeds)
-from utils.google_utils import attempt_download
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts
-
 # import HHI Dataset format:
 from hhi_dataset.dataset import (Dataset as HHIDataset)
 
@@ -85,9 +83,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
 
     # Model
     pretrained = weights.endswith('.pt')
-    if pretrained:
-        with torch_distributed_zero_first(rank):
-            attempt_download(weights)  # download if not found locally
+    if pretrained:       
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
         if hyp.get('anchors'):
             ckpt['model'].yaml['anchors'] = round(hyp['anchors'])  # force autoanchor
@@ -401,7 +397,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                     # resave the best model in a STANDALONE format, to be used for the GEC Video Analysis:
                     model_path = str(f2)
                     if "best" in model_path:
-                        attempt_load(os.path.abspath(model_path), resave=True)
+                        attempt_load(os.path.abspath(model_path), resave=True, cfg=opt.cfg)
         # Finish
         if not opt.evolve:
             plot_results(save_dir=log_dir)  # save as results.png
@@ -413,8 +409,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     
     return results
 
-
-if __name__ == '__main__':
+def main(override_args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
     parser.add_argument('--hyp', type=str, default='data/hyp.scratch.yaml', help='hyperparameters path')
@@ -463,6 +458,19 @@ if __name__ == '__main__':
     # ---------------
 
     opt = parser.parse_args()
+    
+    # ---------------
+    # override the command-line parameters:
+    if override_args is not None:
+        opt.data = override_args.data
+        opt.cfg = override_args.cfg
+        opt.multi_scale = override_args.multi_scale
+        opt.val_size = override_args.val_size
+        opt.epochs = override_args.epochs
+        opt.batch_size = override_args.batch_size
+        opt.classes = override_args.classes
+    # ---------------
+    
 
     # Set DDP variables
     opt.total_batch_size = opt.batch_size
@@ -609,3 +617,6 @@ if __name__ == '__main__':
         plot_evolution(yaml_file)
         print(f'Hyperparameter evolution complete. Best results saved as: {yaml_file}\n'
               f'Command to train a new model with these hyperparameters: $ python train.py --hyp {yaml_file}')
+
+if __name__ == '__main__':
+    main()
