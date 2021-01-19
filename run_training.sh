@@ -1,0 +1,1 @@
+python train.py --data e:\Datasets\small_dataset\metadata.json --weights "" --cfg models\yolov5l.yaml --multi-scale --val-size 0.05 --epochs 2 --batch-size 2

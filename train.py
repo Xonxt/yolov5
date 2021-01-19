@@ -34,6 +34,9 @@ from utils.torch_utils import ModelEMA, select_device, intersect_dicts
 # import HHI Dataset format:
 from hhi_dataset.dataset import (Dataset as HHIDataset)
 
+# import the module for opening the model, to resave it in a standalone format
+from models.experimental import attempt_load
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,29 +61,22 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     cuda = device.type != 'cpu'
     init_seeds(2 + rank)
 
-    # check if using HHI Json Dataset Format:
-    USING_HHI_JSON = ('json' in os.path.splitext(opt.data)[-1].lower())
+    # using HHI Json Dataset Format:
+    hhi_dataset = HHIDataset(opt.data)
 
-    if USING_HHI_JSON and os.path.isfile(opt.data):
-        hhi_dataset = HHIDataset(opt.data)
+    # here you can set "classes=['rectangle']" to take all rectangles, or list actual class names to filter by class names
+    # e.g.: classes=['hand', 'finger', 'face']
+    train, valid, classes = hhi_dataset.split_training_data(classes=opt.classes, val_fraction=opt.val_size, shuffle=True)
 
-        # here you can set "classes=['rectangle']" to take all rectangles, or list actual class names to filter by class names
-        # e.g.: classes=['hand', 'finger', 'face']
-        train, valid, classes = hhi_dataset.split_training_data(classes=opt.classes, val_fraction=opt.val_size, shuffle=True)
-
-        data_dict = {
-            'train': {'path': opt.data, 'dataset': train},
-            'val': {'path': opt.data, 'dataset': valid},
-            'names': list(classes.keys()),
-            'nc': len(classes)
-        }
-        print(f"Dataset is split into {len(train)} training samples and {len(valid)} validation samples")
-        print(f"The dataset contains the following list of classes: {list(classes.keys())}")
-    else:
-        with open(opt.data) as f:
-            data_dict = yaml.load(f, Loader=yaml.FullLoader)  # data dict
-        with torch_distributed_zero_first(rank):
-            check_dataset(data_dict)  # check
+    data_dict = {
+        'train': {'path': opt.data, 'dataset': train},
+        'val': {'path': opt.data, 'dataset': valid},
+        'names': list(classes.keys()),
+        'nc': len(classes)
+    }
+    print(f"Dataset is split into {len(train)} training samples and {len(valid)} validation samples")
+    print(f"The following classes will be used for training: {list(classes.keys())}")
+  
 
     train_path = data_dict['train']
     test_path = data_dict['val']
@@ -339,7 +335,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                 ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride'])
             final_epoch = epoch + 1 == epochs
             if not opt.notest or final_epoch:  # Calculate mAP
-                results, maps, times = test.test(opt.data if not USING_HHI_JSON else hhi_dataset,
+                results, maps, times = test.test(hhi_dataset,
                                                  batch_size=total_batch_size,
                                                  imgsz=imgsz_test,
                                                  model=ema.ema,
@@ -400,19 +396,26 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                 if str(f2).endswith('.pt'):  # is *.pt
                     strip_optimizer(f2)  # strip optimizer
                     os.system('gsutil cp %s gs://%s/weights' % (f2, opt.bucket)) if opt.bucket else None  # upload
+                    
+                    #---------------------------------------------------
+                    # resave the best model in a STANDALONE format, to be used for the GEC Video Analysis:
+                    model_path = str(f2)
+                    if "best" in model_path:
+                        attempt_load(os.path.abspath(model_path), resave=True)
         # Finish
         if not opt.evolve:
             plot_results(save_dir=log_dir)  # save as results.png
         logger.info('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, (time.time() - t0) / 3600))
-
+    
+    
     dist.destroy_process_group() if rank not in [-1, 0] else None
     torch.cuda.empty_cache()
+    
     return results
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='yolov5s.pt', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
     parser.add_argument('--hyp', type=str, default='data/hyp.scratch.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=300)
@@ -438,10 +441,13 @@ if __name__ == '__main__':
     parser.add_argument('--log-imgs', type=int, default=10, help='number of images for W&B logging, max 100')
     parser.add_argument('--workers', type=int, default=8, help='maximum number of dataloader workers')
 
-
+    # ---------------
     # changed/added parameters:
     
-    parser.add_argument('--data', type=str, default='data/coco128.yaml', help='data.yaml path OR path to the HHI Json Dataset')
+    parser.add_argument('--weights', type=str, default='', help='initial weights path')
+    # start training from scratch by default
+    
+    parser.add_argument('--data', type=str, default='', help='path to the HHI Json Dataset')
     # here you can set the path to the "yaml" file that describes the dataset, just as before
     # but if you give a path to a JSON file, then it will be read and parsed as a HHI Json Format Dataset metadata file
 
@@ -453,6 +459,8 @@ if __name__ == '__main__':
     # but you can limit the training to only specific classes, and give them as a space-separated list
     # (use ""-quotation marks, if a class name has whitespaces), e.g.:
     # python train.py --data ... --classes gec_object bad_gec_object "screw hole" hand "open hand" --val_size 0.05 ...
+    
+    # ---------------
 
     opt = parser.parse_args()
 

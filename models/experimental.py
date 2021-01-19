@@ -143,12 +143,13 @@ def attempt_load(weights, map_location=None, resave=False):
 
         if resave:
             model_name = os.path.splitext(w)
-            new_save_path = model_name[0] + "_" + str(i) + model_name[-1]
+            new_save_path = model_name[0] + "_standalone_" + str(i) + model_name[-1]
 
             resaved_names.append(new_save_path)
             resaved_models.append(torch.load(w)['model'])
 
-        model.append(torch.load(w, map_location=map_location)['model'].float().fuse().eval())  # load FP32 model
+        else:
+            model.append(torch.load(w, map_location=map_location)['model'].float().fuse().eval())  # load FP32 model
 
     if resave:
         for i in range(len(resaved_models)):
@@ -160,6 +161,8 @@ def attempt_load(weights, map_location=None, resave=False):
                 pass
 
             torch.save({'model': resaved_models[i].state_dict()}, resaved_names[i])
+            
+        return None
 
     # Compatibility updates
     for m in model.modules():
