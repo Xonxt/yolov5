@@ -34,18 +34,9 @@ def detect(save_img=False):
     half = device.type != 'cpu'  # half precision only supported on CUDA
 
     # Load model
-    # model = attempt_load(weights, map_location=device, resave=opt.resave)  # load FP32 model
-    
-    model = Model("models/yolov5l.yaml", ch=3, nc=4)
-    weights = "D:\\Projects\\YOLO\\yolov5\\runs\\exp8\\weights\\model_pytorch_object_detector_yolo5_many.pt"
-    model.load_state_dict(torch.load(weights, map_location=device)['model'])
-    model.to(device).float().fuse().eval()
-    
-    # imgsz = check_img_size(imgsz, s=model.stride.max())  # check img_size
-    imgsz = 640
-    
-    print("Using HALF precision: ", half)
-    
+    model = attempt_load(weights, map_location=device, resave=opt.resave)  # load FP32 model
+    imgsz = check_img_size(imgsz, s=model.stride.max())  # check img_size
+        
     if half:
         model.half()  # to FP16
         

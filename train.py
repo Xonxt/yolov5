@@ -34,6 +34,9 @@ from utils.torch_utils import ModelEMA, select_device, intersect_dicts
 # import HHI Dataset format:
 from hhi_dataset.dataset import (Dataset as HHIDataset)
 
+# import the attempt_load function, to resave the model in a standalone format
+from models.experimental import attempt_load
+
 logger = logging.getLogger(__name__)
 
 
@@ -399,7 +402,13 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                 os.rename(f1, f2)  # rename
                 if str(f2).endswith('.pt'):  # is *.pt
                     strip_optimizer(f2)  # strip optimizer
-                    os.system('gsutil cp %s gs://%s/weights' % (f2, opt.bucket)) if opt.bucket else None  # upload
+                    os.system('gsutil cp %s gs://%s/weights' % (f2, opt.bucket)) if opt.bucket else None  # upload                    
+                                        
+                    #---------------------------------------------------
+                    # resave the best model in a STANDALONE format, to be used for the GEC Video Analysis:
+                    model_path = str(f2)
+                    if "best" in model_path:
+                        attempt_load(os.path.abspath(model_path), resave=True)
         # Finish
         if not opt.evolve:
             plot_results(save_dir=log_dir)  # save as results.png
