@@ -419,9 +419,11 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     return results
 
 
-if __name__ == '__main__':
+def main(override_args=None):
+    
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='yolov5s.pt', help='initial weights path')
+    
+    parser.add_argument('--weights', type=str, default='', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
     parser.add_argument('--hyp', type=str, default='data/hyp.scratch.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=300)
@@ -464,6 +466,19 @@ if __name__ == '__main__':
     # python train.py --data ... --classes gec_object bad_gec_object "screw hole" hand "open hand" --val_size 0.05 ...
 
     opt = parser.parse_args()
+    
+    # ---------------
+    # override the command-line parameters:
+    if override_args is not None:
+        opt.data = override_args.data
+        opt.cfg = override_args.cfg
+        opt.multi_scale = override_args.multi_scale
+        opt.val_size = override_args.val_size
+        opt.epochs = override_args.epochs
+        opt.batch_size = override_args.batch_size
+        opt.classes = override_args.classes
+        opt.device = override_args.device
+    # ---------------
 
     # Set DDP variables
     opt.total_batch_size = opt.batch_size
@@ -610,3 +625,7 @@ if __name__ == '__main__':
         plot_evolution(yaml_file)
         print(f'Hyperparameter evolution complete. Best results saved as: {yaml_file}\n'
               f'Command to train a new model with these hyperparameters: $ python train.py --hyp {yaml_file}')
+
+
+if __name__ == '__main__':
+    main()
