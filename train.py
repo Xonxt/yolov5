@@ -469,6 +469,7 @@ def main(override_args=None):
         opt.epochs = override_args.epochs
         opt.batch_size = override_args.batch_size
         opt.classes = override_args.classes
+        opt.device = override_args.device
     # ---------------
     
 

@@ -11,6 +11,9 @@ if __name__ == "__main__":
         # which YOLO config to use
         cfg = "models\\yolov5l.yaml"
         
+        # which device(-s) to use for training
+        device = '' # cuda device, i.e. '0' or '0,1,2,3' or 'cpu' (default is '' = ALL)
+        
         multi_scale = True      # vary image size +/- 50% during training
         val_size = 0.05         # % of the dataset to use for validation
         epochs = 1              # number of epochs
